@@ -35,6 +35,7 @@ class ChessBot:
         # State
         self.auto_click_enabled = False
         self.auto_clicker_thread = None
+        self.board_flipped = False  # True jika Anda main sebagai Black di bawah
         
         # GUI
         self.root = None
@@ -74,6 +75,23 @@ class ChessBot:
         self.calib_status = tk.Label(calib_frame, text="Status: Belum dikalibrasi", 
                                      fg="red")
         self.calib_status.pack(pady=5)
+        
+        # Board Orientation
+        orient_frame = tk.Frame(self.root, relief=tk.RIDGE, borderwidth=2)
+        orient_frame.pack(pady=5, padx=20, fill=tk.X)
+        
+        tk.Label(orient_frame, text="Perspektif Papan:", 
+                font=('Arial', 10, 'bold')).pack(pady=5)
+        
+        self.board_flip_var = tk.BooleanVar(value=False)
+        tk.Radiobutton(orient_frame, text="Normal (White di bawah)", 
+                      variable=self.board_flip_var, value=False,
+                      command=self.update_board_orientation,
+                      font=('Arial', 9)).pack()
+        tk.Radiobutton(orient_frame, text="Flipped (Black di bawah)", 
+                      variable=self.board_flip_var, value=True,
+                      command=self.update_board_orientation,
+                      font=('Arial', 9)).pack()
         
         # Auto-Clicker Toggle
         auto_frame = tk.Frame(self.root)
@@ -187,6 +205,15 @@ class ChessBot:
         else:
             self.log("Config grid tidak ditemukan. Silakan kalibrasi.")
             
+    def update_board_orientation(self):
+        """Update orientasi board dan auto-clicker"""
+        self.board_flipped = self.board_flip_var.get()
+        if self.auto_clicker:
+            self.auto_clicker.set_board_flipped(self.board_flipped)
+        
+        orientation = "Flipped (Black di bawah)" if self.board_flipped else "Normal (White di bawah)"
+        self.log(f"✓ Perspektif papan: {orientation}")
+    
     def setup_auto_clicker(self):
         """Setup auto-clicker dengan koordinat yang sudah dikalibrasi"""
         if not self.calibrator.coordinates:
@@ -197,6 +224,7 @@ class ChessBot:
             coords['x1'], coords['y1'], 
             coords['x2'], coords['y2']
         )
+        self.auto_clicker.set_board_flipped(self.board_flipped)
         self.log("✓ Auto-clicker siap")
         
     def toggle_auto_clicker(self):

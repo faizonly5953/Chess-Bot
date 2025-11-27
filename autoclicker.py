@@ -26,6 +26,7 @@ class AutoClicker:
         self.last_processed_move = None
         self.observer = None
         self.running = False
+        self.board_flipped = False  # True jika Black di bawah
         
     def get_turn_from_fen(self):
         try:
@@ -37,6 +38,10 @@ class AutoClicker:
                 return 'white' if board.turn == chess.WHITE else 'black'
         except (IOError, ValueError, AssertionError):
             return 'white'
+
+    def set_board_flipped(self, flipped):
+        """Set apakah board diflip (Black di bawah)"""
+        self.board_flipped = flipped
 
     def validate_move_format(self, san_move):
         assert san_move, "Move tidak boleh kosong"
@@ -58,9 +63,13 @@ class AutoClicker:
         assert 1 <= start_row <= 8, "Baris awal harus 1-8"
         assert 1 <= end_row <= 8, "Baris akhir harus 1-8"
         
-        # PENTING: Papan catur standar -> White di bawah, Black di atas
-        # Koordinat TIDAK perlu dibalik karena notasi UCI sudah benar
-        # e2e4 = dari e2 (row 2) ke e4 (row 4) - sudah sesuai perspektif White
+        # LOGIKA PERSPEKTIF:
+        # - Normal (White di bawah): koordinat UCI langsung dipakai
+        # - Flipped (Black di bawah): koordinat harus dibalik
+        if self.board_flipped:
+            # Flip koordinat untuk perspektif Black di bawah
+            start_row, end_row = 9 - start_row, 9 - end_row
+            start_col, end_col = 9 - start_col, 9 - end_col
         
         return ((start_row, start_col), (end_row, end_col))
 
