@@ -28,9 +28,11 @@ class StockfishEngine:
         
         self.send_command("uci")
         self.send_command("setoption name Threads value 4")
-        self.send_command("setoption name Skill Level value 20")
         self.send_command("setoption name Move Overhead value 10")
         self.send_command("setoption name MultiPV value 1")
+        # Don't set Skill Level - will use UCI_LimitStrength/UCI_Elo instead
+        # Initialize with unlimited strength by default
+        self.send_command("setoption name UCI_LimitStrength value false")
         if self.syzygy_path:
             self.send_command(f"setoption name SyzygyPath value {self.syzygy_path}")
         self.send_command("isready")

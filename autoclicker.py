@@ -15,7 +15,7 @@ MAX_MOVE_LENGTH = 10
 COL_MAP = {'a': 1, 'b': 2, 'c': 3, 'd': 4, 'e': 5, 'f': 6, 'g': 7, 'h': 8}
 
 class AutoClicker:
-    def __init__(self, grid_start_x, grid_start_y, grid_end_x, grid_end_y):
+    def __init__(self, grid_start_x, grid_start_y, grid_end_x, grid_end_y, instant_mode=False):
         self.grid_start_x = grid_start_x
         self.grid_start_y = grid_start_y
         self.grid_end_x = grid_end_x
@@ -27,6 +27,7 @@ class AutoClicker:
         self.observer = None
         self.running = False
         self.board_flipped = False  # True jika Black di bawah
+        self.instant_mode = instant_mode  # True untuk instant click tanpa simulasi
         
     def get_turn_from_fen(self):
         try:
@@ -42,6 +43,10 @@ class AutoClicker:
     def set_board_flipped(self, flipped):
         """Set apakah board diflip (Black di bawah)"""
         self.board_flipped = flipped
+    
+    def set_instant_mode(self, instant):
+        """Set mode klik: instant (True) atau simulate human (False)"""
+        self.instant_mode = instant
 
     def validate_move_format(self, san_move):
         assert san_move, "Move tidak boleh kosong"
@@ -97,23 +102,35 @@ class AutoClicker:
         assert 0 <= x <= 3000, "X koordinat di luar batas"
         assert 0 <= y <= 3000, "Y koordinat di luar batas"
         
-        pyautogui.moveTo(x, y, duration=duration)
-        time.sleep(0.1)
-        pyautogui.mouseDown(x, y)
-        time.sleep(0.1)
-        pyautogui.mouseUp(x, y)
-        time.sleep(0.1)
+        if self.instant_mode:
+            # Instant mode: langsung klik tanpa animasi
+            pyautogui.click(x, y)
+        else:
+            # Human simulation mode: dengan gerakan mouse dan delay
+            pyautogui.moveTo(x, y, duration=duration)
+            time.sleep(0.1)
+            pyautogui.mouseDown(x, y)
+            time.sleep(0.1)
+            pyautogui.mouseUp(x, y)
+            time.sleep(0.1)
 
     def execute_move(self, start_pos, end_pos):
         assert start_pos, "Start position tidak boleh None"
         assert end_pos, "End position tidak boleh None"
         
-        self.perform_click(start_pos[0], start_pos[1])
-        time.sleep(0.3)
-        self.perform_click(end_pos[0], end_pos[1])
-        time.sleep(0.3)
-        pyautogui.hotkey('alt', 'tab')
-        time.sleep(0.2)
+        if self.instant_mode:
+            # Instant mode: klik langsung tanpa delay
+            self.perform_click(start_pos[0], start_pos[1])
+            self.perform_click(end_pos[0], end_pos[1])
+            pyautogui.hotkey('alt', 'tab')
+        else:
+            # Human simulation mode: dengan delay natural
+            self.perform_click(start_pos[0], start_pos[1])
+            time.sleep(0.3)
+            self.perform_click(end_pos[0], end_pos[1])
+            time.sleep(0.3)
+            pyautogui.hotkey('alt', 'tab')
+            time.sleep(0.2)
 
     def process_move_file(self):
         file_path = Path('best.txt')

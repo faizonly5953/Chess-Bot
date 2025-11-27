@@ -117,8 +117,8 @@ class GridCalibrator:
         except IOError as e:
             print(f"Error menyimpan gambar: {e}")
             
-    def save_config(self):
-        """Simpan koordinat ke config.txt"""
+    def save_config(self, elo_limit=False, elo_value=1500):
+        """Simpan koordinat dan Elo settings ke config.txt"""
         if not self.coordinates:
             return
             
@@ -128,12 +128,14 @@ class GridCalibrator:
                 f.write(f"{self.coordinates['y1']}\n")
                 f.write(f"{self.coordinates['x2']}\n")
                 f.write(f"{self.coordinates['y2']}\n")
-            print("Koordinat disimpan ke grid_config.txt")
+                f.write(f"{int(elo_limit)}\n")
+                f.write(f"{elo_value}\n")
+            print("Koordinat dan Elo settings disimpan ke grid_config.txt")
         except IOError as e:
             print(f"Error menyimpan config: {e}")
             
     def load_config(self):
-        """Load koordinat dari config.txt"""
+        """Load koordinat dan Elo settings dari config.txt"""
         try:
             with open('grid_config.txt', 'r') as f:
                 lines = f.readlines()
@@ -142,6 +144,10 @@ class GridCalibrator:
                     y1 = int(lines[1].strip())
                     x2 = int(lines[2].strip())
                     y2 = int(lines[3].strip())
+                    
+                    # Load Elo settings if available (backward compatible)
+                    elo_limit = bool(int(lines[4].strip())) if len(lines) > 4 else False
+                    elo_value = int(lines[5].strip()) if len(lines) > 5 else 1500
                     
                     width = abs(x2 - x1)
                     height = abs(y2 - y1)
@@ -152,9 +158,12 @@ class GridCalibrator:
                         'x2': x2,
                         'y2': y2,
                         'width': width,
-                        'height': height
+                        'height': height,
+                        'elo_limit': elo_limit,
+                        'elo_value': elo_value
                     }
                     print(f"Koordinat dimuat: ({x1}, {y1}) ke ({x2}, {y2})")
+                    print(f"Elo settings: Limit={elo_limit}, Elo={elo_value}")
                     return self.coordinates
         except (IOError, ValueError) as e:
             print(f"Config tidak ditemukan atau invalid: {e}")

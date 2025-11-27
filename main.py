@@ -208,6 +208,58 @@ class ChessBot:
                              font=('Arial', 8), fg='gray', wraplength=550)
         path_label.pack(anchor='w', pady=2)
         
+        # Elo Limiting
+        tk.Label(engine_frame, text="", font=('Arial', 2)).pack()  # Spacer
+        
+        self.limit_strength_var = tk.BooleanVar(value=False)
+        limit_cb = tk.Checkbutton(engine_frame, text="Enable UCI_LimitStrength (Human-like play)",
+                                 variable=self.limit_strength_var, font=('Arial', 9, 'bold'))
+        limit_cb.pack(anchor='w', pady=5)
+        
+        elo_frame = tk.Frame(engine_frame)
+        elo_frame.pack(fill=tk.X, pady=5)
+        
+        tk.Label(elo_frame, text="UCI_Elo:", font=('Arial', 9)).pack(side=tk.LEFT)
+        
+        self.elo_var = tk.IntVar(value=1500)
+        elo_slider = tk.Scale(elo_frame, from_=800, to=3190, orient=tk.HORIZONTAL,
+                             variable=self.elo_var, length=300, 
+                             command=lambda v: self.elo_label.config(text=str(self.elo_var.get())))
+        elo_slider.pack(side=tk.LEFT, padx=10)
+        
+        self.elo_label = tk.Label(elo_frame, text="1500", font=('Arial', 10, 'bold'), width=6)
+        self.elo_label.pack(side=tk.LEFT, padx=5)
+        
+        # Apply button
+        apply_btn = tk.Button(engine_frame, text="Apply Settings", 
+                             command=self.apply_engine_settings,
+                             font=('Arial', 10, 'bold'), bg='#4CAF50', fg='white',
+                             padx=20, pady=5)
+        apply_btn.pack(pady=10)
+        
+        # Elo guide
+        elo_guide = tk.Label(engine_frame, 
+                            text="800-1200: Beginner | 1300-1500: Intermediate | 1600-1900: Club | 2000-2300: Expert | 2400+: Master",
+                            font=('Arial', 7), fg='gray')
+        elo_guide.pack(anchor='w')
+        
+        # Click Mode Settings
+        click_frame = tk.LabelFrame(self.tab_config, text="Auto-Clicker Mode", 
+                                    font=('Arial', 11, 'bold'), padx=15, pady=10)
+        click_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        tk.Label(click_frame, text="Click Style:", font=('Arial', 9, 'bold')).pack(anchor='w', pady=5)
+        
+        self.instant_click_var = tk.BooleanVar(value=False)
+        tk.Radiobutton(click_frame, text="Simulate Human Click (with mouse movement & delays)",
+                      variable=self.instant_click_var, value=False,
+                      command=self.update_click_mode,
+                      font=('Arial', 9)).pack(anchor='w', padx=20)
+        tk.Radiobutton(click_frame, text="Instant Click (direct, no animation)",
+                      variable=self.instant_click_var, value=True,
+                      command=self.update_click_mode,
+                      font=('Arial', 9)).pack(anchor='w', padx=20)
+        
         # Instructions
         info_frame = tk.LabelFrame(self.tab_config, text="Quick Start Guide", 
                                    font=('Arial', 11, 'bold'), padx=15, pady=10)
@@ -359,6 +411,11 @@ class ChessBot:
         self.log("Starting grid calibration...")
         coords = self.calibrator.select_area()
         if coords:
+            # Save with current Elo settings
+            elo_limit = self.limit_strength_var.get()
+            elo_value = self.elo_var.get()
+            self.calibrator.save_config(elo_limit, elo_value)
+            
             self.setup_auto_clicker()
             self.calib_status.config(text=f"Status: Saved ({coords['x1']},{coords['y1']}) to ({coords['x2']},{coords['y2']})", 
                                     fg="green")
@@ -370,6 +427,16 @@ class ChessBot:
         """Load grid configuration from file"""
         coords = self.calibrator.load_config()
         if coords:
+            # Apply loaded Elo settings
+            if 'elo_limit' in coords:
+                self.limit_strength_var.set(coords['elo_limit'])
+            if 'elo_value' in coords:
+                self.elo_var.set(coords['elo_value'])
+                self.elo_label.config(text=str(coords['elo_value']))
+            
+            # Update engine with loaded settings
+            self.apply_engine_settings()
+            
             self.setup_auto_clicker()
             self.calib_status.config(text=f"Status: Loaded ({coords['x1']},{coords['y1']}) to ({coords['x2']},{coords['y2']})", 
                                     fg="green")
@@ -386,18 +453,57 @@ class ChessBot:
         orientation = "Flipped (Black bottom)" if self.board_flipped else "Normal (White bottom)"
         self.log(f"✓ Board perspective: {orientation}")
     
+    def apply_engine_settings(self):
+        """Apply engine Elo settings and reset engine"""
+        if not self.engine:
+            self.log("✗ Engine not initialized")
+            return
+            
+        limit_enabled = self.limit_strength_var.get()
+        elo_value = self.elo_var.get()
+        
+        # Update label
+        self.elo_label.config(text=str(elo_value))
+        
+        # Send UCI commands in correct order
+        self.engine.send_command(f"setoption name UCI_LimitStrength value {str(limit_enabled).lower()}")
+        self.engine.send_command(f"setoption name UCI_Elo value {elo_value}")
+        self.engine.send_command("isready")
+        self.engine.wait_for_response("readyok")
+        
+        # Reset engine state with ucinewgame
+        self.engine.send_command("ucinewgame")
+        self.engine.send_command("isready")
+        self.engine.wait_for_response("readyok")
+        
+        if limit_enabled:
+            self.log(f"✓ Engine strength set to Elo {elo_value} (applied & reset)")
+        else:
+            self.log("✓ Engine strength: Full power (unlimited, applied & reset)")
+    
     def setup_auto_clicker(self):
         """Setup auto-clicker with calibrated coordinates"""
         if not self.calibrator.coordinates:
             return
             
         coords = self.calibrator.coordinates
+        instant_mode = self.instant_click_var.get()
         self.auto_clicker = AutoClicker(
             coords['x1'], coords['y1'], 
-            coords['x2'], coords['y2']
+            coords['x2'], coords['y2'],
+            instant_mode=instant_mode
         )
         self.auto_clicker.set_board_flipped(self.board_flipped)
-        self.log("✓ Auto-clicker ready")
+        mode_str = "Instant" if instant_mode else "Human Simulation"
+        self.log(f"✓ Auto-clicker ready (Mode: {mode_str})")
+    
+    def update_click_mode(self):
+        """Update auto-clicker mode when radio button changes"""
+        if self.auto_clicker:
+            instant_mode = self.instant_click_var.get()
+            self.auto_clicker.set_instant_mode(instant_mode)
+            mode_str = "Instant" if instant_mode else "Human Simulation"
+            self.log(f"✓ Click mode changed to: {mode_str}")
         
     def toggle_auto_clicker(self):
         """Toggle auto-clicker on/off"""
