@@ -38,6 +38,7 @@ class ChessBot:
         self.auto_click_enabled = False
         self.auto_clicker_thread = None
         self.board_flipped = False  # True jika Anda main sebagai Black di bawah
+        self.api_mode_active = False  # True jika sedang menerima moves dari API
         
         # GUI
         self.root = None
@@ -62,10 +63,12 @@ class ChessBot:
         # Create Tabs
         self.tab_focus = ttk.Frame(self.tab_control)
         self.tab_config = ttk.Frame(self.tab_control)
+        self.tab_api = ttk.Frame(self.tab_control)
         self.tab_output = ttk.Frame(self.tab_control)
         
         self.tab_control.add(self.tab_focus, text='Focus Mode')
         self.tab_control.add(self.tab_config, text='Configuration')
+        self.tab_control.add(self.tab_api, text='API Server')
         self.tab_control.add(self.tab_output, text='Output Log')
         
         self.tab_control.pack(expand=1, fill='both', padx=10, pady=5)
@@ -73,6 +76,7 @@ class ChessBot:
         # Setup each tab
         self.setup_focus_tab()
         self.setup_config_tab()
+        self.setup_api_tab()
         self.setup_output_tab()
         
         # Initialize engine
@@ -131,11 +135,11 @@ class ChessBot:
         self.fen_display_focus.pack(pady=5)
         
         # Move Input
-        move_frame = tk.LabelFrame(self.tab_focus, text="Your Move (SAN)", 
+        self.move_frame = tk.LabelFrame(self.tab_focus, text="Your Move (SAN) - Manual Mode", 
                                    font=('Arial', 10, 'bold'), padx=10, pady=10)
-        move_frame.pack(pady=10, padx=20, fill=tk.X)
+        self.move_frame.pack(pady=10, padx=20, fill=tk.X)
         
-        input_frame = tk.Frame(move_frame)
+        input_frame = tk.Frame(self.move_frame)
         input_frame.pack(pady=5)
         
         self.move_entry_focus = tk.Entry(input_frame, width=20, 
@@ -145,35 +149,52 @@ class ChessBot:
         self.move_entry_focus.bind("<Return>", self.add_move_focus)
         self.move_entry_focus.focus()
         
-        tk.Button(input_frame, text="→", 
+        self.move_button = tk.Button(input_frame, text="→", 
                  command=self.add_move_focus,
                  font=('Arial', 14, 'bold'),
-                 width=3, bg='#FF9800').pack(side=tk.LEFT, padx=5)
+                 width=3, bg='#FF9800')
+        self.move_button.pack(side=tk.LEFT, padx=5)
         
         # Move Display
         display_frame = tk.Frame(self.tab_focus)
         display_frame.pack(pady=10)
         
-        tk.Label(display_frame, text="Last Move:", 
+        tk.Label(display_frame, text="Opponent Move:", 
                 font=('Arial', 9)).grid(row=0, column=0, sticky='e', padx=5)
-        self.last_move_label = tk.Label(display_frame, text="-", 
-                                       font=('Arial', 12, 'bold'))
-        self.last_move_label.grid(row=0, column=1, sticky='w')
+        self.opponent_move_label = tk.Label(display_frame, text="-", 
+                                       font=('Arial', 12, 'bold'),
+                                       fg='#FF5722')
+        self.opponent_move_label.grid(row=0, column=1, sticky='w')
         
-        tk.Label(display_frame, text="Best Move:", 
+        tk.Label(display_frame, text="Our Move:", 
                 font=('Arial', 9)).grid(row=1, column=0, sticky='e', padx=5)
-        self.best_move_label_focus = tk.Label(display_frame, text="-", 
+        self.our_move_label = tk.Label(display_frame, text="-", 
                                              font=('Arial', 14, 'bold'),
                                              fg='#4CAF50')
-        self.best_move_label_focus.grid(row=1, column=1, sticky='w')
+        self.our_move_label.grid(row=1, column=1, sticky='w')
         
-        # Auto-clicker auto-enabled in focus mode
+        # API Mode indicator
+        self.api_mode_label = tk.Label(self.tab_focus, text="", 
+                                       font=('Arial', 8, 'italic'), fg='blue')
+        self.api_mode_label.pack(pady=2)
+        
+        # Auto-clicker controls
+        clicker_frame = tk.Frame(self.tab_focus)
+        clicker_frame.pack(pady=10)
+        
         self.auto_click_var = tk.BooleanVar(value=False)
-        tk.Checkbutton(self.tab_focus, text="Auto-Clicker Enabled", 
+        tk.Checkbutton(clicker_frame, text="Auto-Clicker Enabled", 
                       variable=self.auto_click_var,
                       command=self.toggle_auto_clicker,
                       font=('Arial', 9, 'bold'),
-                      fg='#FF5722').pack(pady=10)
+                      fg='#FF5722').pack(side=tk.LEFT, padx=5)
+        
+        self.stop_clicker_btn = tk.Button(clicker_frame, text="⏹ Stop Auto-Clicker",
+                                         command=self.stop_auto_clicker,
+                                         font=('Arial', 9, 'bold'),
+                                         bg='#F44336', fg='white',
+                                         state=tk.DISABLED)
+        self.stop_clicker_btn.pack(side=tk.LEFT, padx=5)
     
     def setup_config_tab(self):
         """Setup Configuration tab"""
@@ -275,6 +296,105 @@ class ChessBot:
         tk.Label(info_frame, text=instructions, 
                 font=('Arial', 9), justify='left').pack(anchor='w')
     
+    def setup_api_tab(self):
+        """Setup API Server tab untuk auto-play dari external source"""
+        tk.Label(self.tab_api, text="API Server Mode", 
+                font=('Arial', 13, 'bold')).pack(pady=10)
+        
+        # Server Status
+        status_frame = tk.LabelFrame(self.tab_api, text="Server Status", 
+                                     font=('Arial', 11, 'bold'), padx=15, pady=10)
+        status_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        self.api_server_running = False
+        self.api_server_thread = None
+        
+        self.api_status_label = tk.Label(status_frame, text="● Stopped", 
+                                        font=('Arial', 12, 'bold'), fg='red')
+        self.api_status_label.pack(pady=5)
+        
+        # Server Configuration
+        config_frame = tk.LabelFrame(self.tab_api, text="Server Configuration", 
+                                     font=('Arial', 11, 'bold'), padx=15, pady=10)
+        config_frame.pack(pady=10, padx=20, fill=tk.X)
+        
+        # Host
+        host_frame = tk.Frame(config_frame)
+        host_frame.pack(fill=tk.X, pady=5)
+        tk.Label(host_frame, text="Host:", font=('Arial', 9), width=8).pack(side=tk.LEFT)
+        self.api_host_var = tk.StringVar(value='0.0.0.0')
+        tk.Entry(host_frame, textvariable=self.api_host_var, 
+                font=('Arial', 10), width=20).pack(side=tk.LEFT, padx=5)
+        tk.Label(host_frame, text="(0.0.0.0 = all interfaces)", 
+                font=('Arial', 8), fg='gray').pack(side=tk.LEFT)
+        
+        # Port
+        port_frame = tk.Frame(config_frame)
+        port_frame.pack(fill=tk.X, pady=5)
+        tk.Label(port_frame, text="Port:", font=('Arial', 9), width=8).pack(side=tk.LEFT)
+        self.api_port_var = tk.IntVar(value=5000)
+        tk.Spinbox(port_frame, from_=1024, to=65535, textvariable=self.api_port_var,
+                  font=('Arial', 10), width=18).pack(side=tk.LEFT, padx=5)
+        
+        # Control Buttons
+        btn_frame = tk.Frame(self.tab_api)
+        btn_frame.pack(pady=15)
+        
+        self.start_api_btn = tk.Button(btn_frame, text="▶ Start Server", 
+                                      command=self.start_api_server,
+                                      font=('Arial', 11, 'bold'),
+                                      bg='#4CAF50', fg='white', width=15)
+        self.start_api_btn.pack(side=tk.LEFT, padx=5)
+        
+        self.stop_api_btn = tk.Button(btn_frame, text="■ Stop Server", 
+                                     command=self.stop_api_server,
+                                     font=('Arial', 11, 'bold'),
+                                     bg='#F44336', fg='white', width=15,
+                                     state=tk.DISABLED)
+        self.stop_api_btn.pack(side=tk.LEFT, padx=5)
+        
+        # Reset Manual Mode Button
+        reset_frame = tk.Frame(self.tab_api)
+        reset_frame.pack(pady=5)
+        
+        tk.Button(reset_frame, text="🔄 Reset to Manual Mode",
+                 command=self.reset_manual_mode,
+                 font=('Arial', 10, 'bold'),
+                 bg='#FF9800', fg='white', width=25).pack()
+        
+        tk.Label(reset_frame, text="Use this to re-enable manual move input",
+                font=('Arial', 8), fg='gray').pack(pady=2)
+        
+        # API Info
+        info_frame = tk.LabelFrame(self.tab_api, text="API Endpoints", 
+                                   font=('Arial', 11, 'bold'), padx=15, pady=10)
+        info_frame.pack(pady=10, padx=20, fill=tk.BOTH, expand=True)
+        
+        self.api_url_text = tk.Text(info_frame, height=12, font=('Consolas', 9), wrap=tk.WORD)
+        self.api_url_text.pack(fill=tk.BOTH, expand=True)
+        
+        api_info = """Kirim POST request dari browser/script ke:
+
+POST /api/receive-moves
+Body (JSON):
+{
+  "moves": [
+    {"no": 1, "white_move": "e4", "black_move": "e5"},
+    {"no": 2, "white_move": "Nf3", "black_move": null}
+  ]
+}
+
+Server akan:
+1. Update posisi board di aplikasi
+2. Analisis dengan Stockfish
+3. Tampilkan best move
+4. Auto-click jika enabled
+
+GET /api/health - Check server status
+"""
+        self.api_url_text.insert('1.0', api_info)
+        self.api_url_text.config(state=tk.DISABLED)
+    
     def setup_output_tab(self):
         """Setup Output Log tab"""
         tk.Label(self.tab_output, text="System Log", 
@@ -355,8 +475,8 @@ class ChessBot:
         if self.engine:
             self.engine.set_position(self.board.fen())
         
-        self.best_move_label_focus.config(text=best_move_san)
-        self.last_move_label.config(text=best_move_san)
+        self.our_move_label.config(text=best_move_san)
+        self.opponent_move_label.config(text="-")
         self.update_fen_display_focus()
         self.log(f"✓ Best move: {best_move_san} ({best_move_uci})")
     
@@ -374,23 +494,23 @@ class ChessBot:
             if self.engine:
                 self.engine.set_position(self.board.fen())
             
-            self.last_move_label.config(text=move_san)
-            self.log(f"→ Your move: {move_san}")
+            self.opponent_move_label.config(text=move_san)
+            self.log(f"→ Your move (manual): {move_san}")
             
-            # Get opponent's response
+            # Get our bot's response
             if self.engine:
-                opponent_move_uci = self.engine.get_best_move(self.board.fen())
-                if opponent_move_uci:
-                    self.save_best_move_to_file(opponent_move_uci)
+                our_move_uci = self.engine.get_best_move(self.board.fen())
+                if our_move_uci:
+                    self.save_best_move_to_file(our_move_uci)
                     
-                    opponent_move = chess.Move.from_uci(opponent_move_uci)
-                    opponent_san = self.board.san(opponent_move)
+                    our_move = chess.Move.from_uci(our_move_uci)
+                    our_san = self.board.san(our_move)
                     
-                    self.board.push(opponent_move)
+                    self.board.push(our_move)
                     self.engine.set_position(self.board.fen())
                     
-                    self.best_move_label_focus.config(text=opponent_san)
-                    self.log(f"← Best move: {opponent_san} ({opponent_move_uci})")
+                    self.our_move_label.config(text=our_san)
+                    self.log(f"← Our response: {our_san} ({our_move_uci})")
                     self.update_fen_display_focus()
             
             self.move_entry_focus.delete(0, tk.END)
@@ -515,11 +635,36 @@ class ChessBot:
                 return
                 
             self.auto_clicker.start()
+            self.stop_clicker_btn.config(state=tk.NORMAL)
             self.log("✓ Auto-clicker enabled")
         else:
             if self.auto_clicker:
                 self.auto_clicker.stop()
+                self.stop_clicker_btn.config(state=tk.DISABLED)
                 self.log("✓ Auto-clicker disabled")
+    
+    def stop_auto_clicker(self):
+        """Stop auto-clicker immediately"""
+        if self.auto_clicker:
+            self.auto_clicker.stop()
+            self.auto_click_var.set(False)
+            self.stop_clicker_btn.config(state=tk.DISABLED)
+            self.log("🛑 Auto-clicker stopped")
+        else:
+            self.log("⚠ Auto-clicker not running")
+    
+    def _toggle_manual_input(self, enable):
+        """Enable/disable manual move input"""
+        state = tk.NORMAL if enable else tk.DISABLED
+        self.move_entry_focus.config(state=state)
+        self.move_button.config(state=state)
+        
+        if enable:
+            self.move_frame.config(text="Your Move (SAN) - Manual Mode")
+            self.api_mode_label.config(text="")
+        else:
+            self.move_frame.config(text="Your Move (SAN) - API MODE ACTIVE")
+            self.api_mode_label.config(text="🌐 Receiving moves from browser - Manual input disabled")
     
     def save_fen_to_file(self, fen):
         """Simpan FEN ke file"""
@@ -537,6 +682,172 @@ class ChessBot:
         except IOError as e:
             self.log(f"✗ Error menulis best move: {e}")
     
+    def start_api_server(self):
+        """Start API server di background thread"""
+        if self.api_server_running:
+            messagebox.showwarning("Warning", "Server sudah berjalan!")
+            return
+        
+        try:
+            host = self.api_host_var.get()
+            port = self.api_port_var.get()
+            
+            assert host, "Host tidak boleh kosong"
+            assert 1024 <= port <= 65535, "Port harus antara 1024-65535"
+            
+            # Import API server module
+            import api_server
+            
+            # Set callback untuk auto-execute moves
+            def move_callback(fen, last_move, last_move_color):
+                """Callback dipanggil dari API ketika menerima moves dari browser"""
+                self.root.after(0, self._execute_api_move, fen, last_move, last_move_color)
+            
+            api_server.set_move_callback(move_callback)
+            
+            # Start server di background thread
+            self.api_server_thread = threading.Thread(
+                target=api_server.run_server,
+                args=(host, port, False),
+                daemon=True
+            )
+            self.api_server_thread.start()
+            
+            self.api_server_running = True
+            self.api_status_label.config(text="● Running", fg='green')
+            self.start_api_btn.config(state=tk.DISABLED)
+            self.stop_api_btn.config(state=tk.NORMAL)
+            
+            url = f"http://{host}:{port}"
+            self.log(f"✓ API Server started at {url}")
+            
+            # Update URL di text box
+            self.api_url_text.config(state=tk.NORMAL)
+            current_text = self.api_url_text.get('1.0', tk.END)
+            updated_text = f"Server URL: {url}\n\n" + current_text
+            self.api_url_text.delete('1.0', tk.END)
+            self.api_url_text.insert('1.0', updated_text)
+            self.api_url_text.config(state=tk.DISABLED)
+            
+        except AssertionError as e:
+            messagebox.showerror("Error", str(e))
+        except Exception as e:
+            messagebox.showerror("Error", f"Gagal start server: {e}")
+            self.log(f"✗ Error starting API server: {e}")
+    
+    def stop_api_server(self):
+        """Stop API server"""
+        if not self.api_server_running:
+            messagebox.showwarning("Warning", "Server tidak berjalan!")
+            return
+        
+        # Note: Flask tidak bisa di-stop dengan mudah dari thread
+        # Alternatif: restart aplikasi atau gunakan werkzeug shutdown
+        messagebox.showinfo("Info", 
+                           "Server berjalan di background thread.\n"
+                           "Untuk stop server, restart aplikasi.")
+        self.log("⚠ API Server masih running (restart aplikasi untuk stop)")
+    
+    def reset_manual_mode(self):
+        """Reset ke manual mode dan enable input"""
+        self.api_mode_active = False
+        self._toggle_manual_input(True)
+        self.opponent_move_label.config(text="-")
+        self.our_move_label.config(text="-")
+        self.log("🔄 Reset to Manual Mode - You can now input moves manually")
+    
+    def _execute_api_move(self, fen, last_move, last_move_color):
+        """Execute posisi yang diterima dari API (dipanggil via callback)"""
+        try:
+            # Aktifkan API mode dan disable manual input
+            if not self.api_mode_active:
+                self.api_mode_active = True
+                self._toggle_manual_input(False)
+            
+            self.log(f"📡 API: Received position from browser")
+            
+            # Update board state
+            self.board = chess.Board(fen)
+            
+            # Update GUI displays
+            self.fen_display_focus.config(text=f"Current FEN: {fen}")
+            
+            # Determine siapa yang baru jalan (opponent) berdasarkan last_move_color
+            current_turn = self.board.turn  # chess.WHITE atau chess.BLACK (giliran selanjutnya)
+            
+            # Tentukan siapa kita berdasarkan board perspective
+            # Jika flipped (Black bottom), kita main sebagai Black
+            # Jika normal (White bottom), kita main sebagai White
+            we_are_white = not self.board_flipped
+            we_are_color = "white" if we_are_white else "black"
+            
+            opponent_just_moved = last_move is not None and last_move_color is not None
+            
+            if opponent_just_moved:
+                # Cek apakah last move adalah dari opponent
+                is_opponent_move = (last_move_color != we_are_color)
+                
+                if is_opponent_move:
+                    self.opponent_move_label.config(text=last_move)
+                    self.log(f"📡 API: Opponent ({last_move_color}) played = {last_move}")
+                    self.api_mode_label.config(text=f"🌐 Receiving moves from browser (We are {we_are_color})...")
+                else:
+                    # Ini move kita sendiri yang di-echo kembali dari browser
+                    self.log(f"📡 API: Echo of our move = {last_move}")
+                    return  # Skip processing, ini bukan opponent move
+            
+            # Save FEN to file
+            with open("fen.txt", "w") as f:
+                f.write(fen + "\n")
+            
+            # Cek apakah giliran kita untuk respond
+            its_our_turn = (we_are_white and current_turn == chess.WHITE) or \
+                          (not we_are_white and current_turn == chess.BLACK)
+            
+            if its_our_turn and self.engine and opponent_just_moved:
+                self.log(f"🤖 Our turn! Calculating best move...")
+                
+                # Analisis posisi dengan Stockfish
+                best_move_uci = self.engine.get_best_move(fen)
+                if best_move_uci:
+                    # Convert UCI to SAN
+                    move_obj = chess.Move.from_uci(best_move_uci)
+                    best_move_san = self.board.san(move_obj)
+                    
+                    # Apply move to board untuk update state
+                    self.board.push(move_obj)
+                    
+                    self.our_move_label.config(text=best_move_san)
+                    self.log(f"✓ Our move: {best_move_san} (UCI: {best_move_uci})")
+                    
+                    # Save to file untuk auto-clicker
+                    with open("best.txt", "w") as f:
+                        f.write(best_move_uci + "\n")
+                    
+                    # Update FEN after our move
+                    new_fen = self.board.fen()
+                    self.fen_display_focus.config(text=f"Current FEN: {new_fen}")
+                    
+                    with open("fen.txt", "w") as f:
+                        f.write(new_fen + "\n")
+                    
+                    # Auto-clicker akan execute jika enabled
+                    if self.auto_click_var.get():
+                        self.log(f"🖱️ Auto-clicker akan execute {best_move_san}...")
+                    else:
+                        self.log(f"⚠ Auto-clicker disabled. Enable untuk auto-click.")
+            else:
+                if not its_our_turn:
+                    turn_color = "White" if current_turn == chess.WHITE else "Black"
+                    self.log(f"⏳ Waiting for opponent... (Turn: {turn_color})")
+            
+            self.log(f"✓ Position updated via API")
+            
+        except Exception as e:
+            self.log(f"✗ Error executing API position: {e}")
+            import traceback
+            self.log(traceback.format_exc())
+    
     def log(self, message):
         """Tambahkan message ke output console"""
         self.output_text.insert(tk.END, f"{message}\n")
@@ -548,6 +859,8 @@ class ChessBot:
             self.auto_clicker.stop()
         if self.engine:
             self.engine.quit()
+        if self.api_server_running:
+            self.log("⚠ API Server masih running di background")
         self.root.destroy()
     
     def run(self):
